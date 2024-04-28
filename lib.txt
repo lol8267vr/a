@@ -293,12 +293,4 @@ end
 
 mainGui(rgb(255,255,255))
 
-addButton("Create part", "Main", function()
-    Instance.new("Part", RenObjs).CFrame = plr.Character.Head.CFrame
-end)
-
-addButton("Delete all", "Main", function()
-    RenObjs:Destroy()
-end)
-
 ScreenGui.Parent = game.CoreGui
