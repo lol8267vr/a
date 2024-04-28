@@ -1,0 +1,304 @@
+plr = game.Players.LocalPlayer
+char = plr.Character
+
+rw = {} -- Redwood lib
+if workspace:FindFirstChild("resources") then 
+    rw.revent = workspace.resources:FindFirstChild("RemoteEvent") 
+end 
+
+if workspace:FindFirstChild("resources") then 
+    rw.rfunc = workspace.resources:FindFirstChild("RemoteFunction") 
+end 
+
+
+rw.ease = {
+    outSine = function(t, b, e, d)
+        local c = e - b
+        return c * math.sin(t/d * (math.pi/2)) + b
+    end,
+}
+
+_G.movableId = _G.movableId or 0
+if not _G.movables then
+    _G.movables = {}
+end
+rw.movables = _G.movables
+
+rw.Movable = {}
+function rw.Movable:new(callingPlayer, clientId, type, customProps)
+    local o = {["originalClient"] = callingPlayer, ["clientId"] = clientId, ["type"] = type, ["birth"] = tick(),}
+    
+    for n,v in pairs(customProps) do
+        o[n] = v
+    end
+    
+    local checkModel = false
+    if type == "Laser" then
+        o.speed = 100--studs per second
+        o.range = 500--studs
+        o.destroy = true--gets rid of object when finished
+    end
+    if checkModel then
+        for n,v in pairs(rw.movables) do
+            if v.type == type and v.model == o.model then
+                v.finished = true
+            end
+        end
+    end
+    setmetatable(o, self)
+    self.__index = self
+    table.insert(rw.movables, o)
+    return o
+end
+function rw.Movable:Update(step, curTick)
+    if self.finished then
+        --//no need to do shit, must have finished up somewhere else
+        return true
+    end
+    
+    local type = self.type
+    
+    if type == "Laser" then
+        local laser = self.model
+        
+        if self.cleanUp then
+            local cleanUpTime = .25
+            local per = (curTick - self.cleanUp)/cleanUpTime
+            if per > 1 then
+                per = 1
+                self.finished = true
+            else
+                per = rw.ease.outSine(per, 0, 1, 1)
+            end
+            
+            --laser.Size = Vector3.new(0.2 + per*0.5, 0.2 + per*0.5, laser.Size.Z)
+            laser.Transparency = per
+        elseif curTick - self.birth >= 0 then
+            self.cleanUp = curTick
+        end
+    end
+    
+    return self.finished
+end
+function rw:newMovable(type, customProps)
+    _G.movableId = _G.movableId + 1
+    local mov = rw.Movable:new(plr, _G.movableId, type, customProps)
+    --table.insert(rw.movables, mov)--this was adding rw.movables to the list twice, which should not have happened
+end
+
+function rw:drawLaser(origin, target, customProps)
+    local p = Instance.new("Part", nil)
+    p.TopSurface = "Smooth"
+    p.BottomSurface = "Smooth"
+    p.Material = "SmoothPlastic"
+    p.Anchored = true
+    p.CanCollide = true
+    local laserTemp = p
+    laserTemp.Parent = nil
+    laserTemp.Material = Enum.Material.SmoothPlastic
+    laserTemp.BrickColor = BrickColor.new("Mid gray")
+    laserTemp.Anchored = true
+    laserTemp.CanCollide = false
+
+    local dist = (origin-target).magnitude
+    local laser = laserTemp:Clone()
+    laser.Parent = workspace:FindFirstChild('ignore') or nil
+    laser.Size = Vector3.new(0.2,0.2,dist)
+    laser.CFrame = CFrame.new(origin, target) * CFrame.new(0, 0, -dist/2) * CFrame.Angles(0, 0, 2*math.pi*math.random())
+    if customProps then
+        for n,v in pairs(customProps) do
+            laser[n] = v
+        end
+    end
+
+    
+    local mov = rw:newMovable("Laser", {
+        ["model"] = laser,
+    })
+    
+    return laser
+end
+
+function rw:drawLaserAll(origin, target, customProps)
+    rw:drawLaser(origin, target, customProps)
+    if not rw.revent then return end
+    rw.revent:FireServer("FireOtherClients", "drawLaser", origin, target, customProps,  true)
+end
+
+function rw:drawLaserOthers(origin, target, customProps)
+    if not rw.revent then return end
+    rw.revent:FireServer("FireOtherClients", "drawLaser", origin, target, customProps, true)
+end
+
+function rw:drawLaserLaggier(origin, target, customProps)
+    if not rw.revent then return end
+    rw.revent:FireServer("FireAllClients", "drawLaser", origin, target, customProps)
+end
+
+local rs = game:GetService("RunService")
+
+rs:UnbindFromRenderStep("Fixed lasers")
+wait()
+rs:BindToRenderStep("Fixed lasers", 1, function(step)
+    local curTick = tick()
+    
+    for n = #rw.movables,1,-1 do
+        local mover = rw.movables[n]
+        local finished = mover:Update(step, curTick)
+        
+        if finished then
+            if mover.destroy and mover.model then
+                mover.model:Destroy()
+            end
+            
+            table.remove(rw.movables, n)
+        end
+    end
+end)
+
+
+-- Render Section
+
+local findin
+findin = function(instance)
+    local same = {}
+    for i, v in pairs(instance:GetChildren()) do
+        if v:isA("Part") then table.insert(same, v) end
+        if v:isA("Model") then
+            findin(v)
+        end
+    end
+    return same
+end
+
+local RenObjs 
+
+rs:UnbindFromRenderStep("Rendered Objects")
+wait()
+
+local Skipp = 0
+
+if workspace:FindFirstChild'RenderedObjects' then
+    workspace:FindFirstChild'RenderedObjects':Destroy()
+end 
+wait()
+rs:BindToRenderStep("Rendered Objects", 1, function()
+    Skipp = Skipp + 1
+
+    if Skipp > 2 then
+        rw.revent:FireServer("FireAllClients", "updateClock", -80220)
+        if workspace:FindFirstChild'RenderedObjects' then
+            RenObjs = workspace:FindFirstChild'RenderedObjects'
+        else
+            RenObjs = Instance.new("Model", workspace)
+            RenObjs.Name = "RenderedObjects"
+        end
+        
+        for i,v in pairs(findin(RenObjs)) do
+            if not v:isA("Part") then return end
+            if v:isA("SpecialMesh") then return end
+            local a = {}
+            a.BrickColor = v.BrickColor
+            a.Size = v.Size
+            a.Transparency = v.Transparency
+            a.CFrame = v.CFrame
+            a.CanCollide = v.CanCollide
+            a.Name = v.Name
+            a.Material = v.Material
+            a.BackSurface = v.BackSurface
+            a.BottomSurface = v.BottomSurface
+            a.FrontSurface = v.FrontSurface
+            a.LeftSurface = v.LeftSurface
+            a.RightSurface = v.RightSurface
+            a.TopSurface = v.TopSurface
+            rw:drawLaserOthers(Vector3.new(1,0,0), Vector3.new(0,0,0), a, true)
+        end
+        Skipp = 0
+        -- print'a'
+    end
+end)
+
+-- GUI Functions part
+
+if game.CoreGui:FindFirstChild("RWBuilding") then game.CoreGui:FindFirstChild("RWBuilding"):Destroy() end
+ScreenGui = Instance.new("ScreenGui")
+ScreenGui.Name = "RWBuilding"
+
+rgb = Color3.fromRGB
+
+guis = {}
+
+function addButton(name, category, funct)
+	local bxddd = Instance.new("TextButton")
+	
+	guis[category].num = guis[category].num+1
+	
+	bxddd.Name = guis[category].num
+	bxddd.Parent = guis[category].gui.background
+	bxddd.BackgroundColor3 = Color3.new(1, 1, 1)
+	bxddd.Size = UDim2.new(1, 0, 0, 25)
+	bxddd.Style = Enum.ButtonStyle.RobloxRoundDropdownButton
+	bxddd.Font = Enum.Font.SourceSans
+	bxddd.Text = name
+	bxddd.TextColor3 = Color3.new(0, 0, 0)
+	bxddd.TextSize = 14
+	guis[category].gui.background.Size = guis[category].gui.background.Size	+ UDim2.new(0,0,0,25)
+	
+	bxddd.MouseButton1Click:Connect(funct)
+end
+
+function mainGui(color)
+	local Category = Instance.new("Frame")
+	local background = Instance.new("Frame")
+	local UIListLayout = Instance.new("UIListLayout")
+	local toggle = Instance.new("TextButton")
+	local Name = Instance.new("TextLabel")
+	--Properties:
+	
+	Category.Name = "Category"
+	Category.Parent = ScreenGui
+	Category.BackgroundColor3 = color
+	Category.BorderColor3 = Color3.new(1, 0, 0)
+	Category.BorderSizePixel = 0
+	Category.Position = UDim2.new(0.415254265, 0, 0.482558161, 0)
+	Category.Size = UDim2.new(0, 179, 0, 17)
+	Category.Active = true
+	Category.Draggable = true
+	
+	background.Name = "background"
+	background.Parent = Category
+	background.BackgroundColor3 = Color3.new(0.615686, 0.615686, 0.615686)
+	background.BackgroundTransparency = 0.20000000298023
+	background.BorderSizePixel = 0
+	background.Position = UDim2.new(0, 0, 1, 0)
+	background.Size = UDim2.new(1, 0, 0, 0)
+	
+	UIListLayout.Parent = background
+	
+	Name.Name = "Name"
+	Name.Parent = Category
+	Name.BackgroundColor3 = Color3.new(1, 1, 1)
+	Name.BackgroundTransparency = 1
+	Name.BorderSizePixel = 0
+	Name.Size = UDim2.new(1, 0, 1, 0)
+	Name.Font = Enum.Font.SourceSans
+	Name.TextColor3 = Color3.new(0, 0, 0)
+	Name.TextSize = 14
+	Name.Text = "Redwood building"
+	guis["Main"] = {}
+	guis["Main"].gui = Category
+	guis["Main"].num = 0
+	return Category
+end
+
+mainGui(rgb(255,255,255))
+
+addButton("Create part", "Main", function()
+    Instance.new("Part", RenObjs).CFrame = plr.Character.Head.CFrame
+end)
+
+addButton("Delete all", "Main", function()
+    RenObjs:Destroy()
+end)
+
+ScreenGui.Parent = game.CoreGui
